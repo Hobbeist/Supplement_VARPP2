@@ -78,6 +78,6 @@ downloadGTExV8 <- function (type = "genes", file = NULL, ...)
 
 
 # Download GTExV8
-gtex8 <- downloadGTExV8(type="genes", file="../GTExV8/gtex8.rds")
+gtex8 <- downloadGTExV8(type="genes", file="../data/gtex8.rds")
 
 
