@@ -1,0 +1,5 @@
+* Supplement for: Pathogenic variant prediction in rare disease diagnostics using tissue specific and single cell gene expression data: VARPP v2.0 
+Sebastian Rauschert, Denise Anderson, Timo Lassmann
+
+This repository contains the supplementary code for the above publication. Specifically, it includes all steps that we untertook to prepare the 
+pathogenic and benign variant files required for VARPP v2.0 and its RuleFit feature.
