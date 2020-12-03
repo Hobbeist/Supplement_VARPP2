@@ -4,7 +4,6 @@
 
 
 * Overview 
-<details>
 This org-file contains all steps to prepare the pathogenic and benign variant files utilised in the publication.
 We only need to prepare those files once, and in case new versions of CADD, ClinVar or GTEx are released, we can update these
 data sets.  
@@ -19,7 +18,6 @@ Of note:
 - this data preparation can only be performed on a server with sufficient memory (>= 128Gb) and large storage (>= 1TB).
 - It is assumed that bedtools, bcftools and R are installed on the analysis computer
 
-</details>
 * Downloading required *data*
 Six different data sources are required:
 
