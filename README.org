@@ -1,65 +1,25 @@
-#+AUTHOR: Sebastian Rauschert, PhD
-#+TITLE: Prepare VARPP/RuleFit data
+#+AUTHOR: Sebastian Rauschert, Denise Anderson, Timo Lassmann
+#+TITLE: Supplement: Prepare Pathogenic and benign variant files
 #+DATE: 17.09.2020
 
 * Overview 
-This org-file contains all steps to prepare the pathogenic and benign as well as the GTEx V8 input files for ~varppRuleFit~.
+
+This org-file contains all steps to prepare the pathogenic and benign variant files utilised in the publication.
 We only need to prepare those files once, and in case new versions of CADD, ClinVar or GTEx are released, we can update these
 data sets.  
 
 The structure of this org-file is the following:  
-1. Installing necessary software
-2. Downloading the required data (ClinVar, CADD, gnomAD, GTExV8)
-3. Preparing the data with phenolyzer (eventually put in a seperate file)
+1. Downloading the required data (ClinVar, CADD, gnomAD, GTExV8, dbSNP)
+2. Preparing the data
+3. Creating the pathogenic variant file
+4. Creating the benign variant file 
 
-Of note: this data preparation can only be performed on a server with sufficient memory ($\geq$ 128Gb) and large storage ($\geq$ 1TB).
-
-* Installing necessary *software*
-For this task, we need the following software:
-
-1. ~[[https://bedtools.readthedocs.io/en/latest/index.html][bedtools]]~
-2. ~[[http://samtools.github.io/bcftools/bcftools.html][bcftools]]~
-
-** ~bedtools~
-Bedtools is our swiss army knive throughout the entire data preparation. We use it mostly with its ~intersect~ functionality, to merge
-data sets based on their genomic locations.
-
-The location of bedtools will be in the home directory, and this is where we need to call it from when using it in our code.
-Hence, it will always look like:
-#+BEGIN_SRC 
-/home/ubuntu/bedtools <function> <arguments>
-#+END_SRC
-
--ADD THE INSTALLATION LATER- (for now, the installation guide on the bedtools website will suffice)
-
-** ~bcftools~
-We need ~bcftools~ to extract the locations we need from ClinVar, so we can use
-bedtools to intersect the locations of the HPO gene locations with the variant locations.
-
-We further use the ~filter~ functionality to filter out the variants with allele frequencies <0.01 in gnomAD. 
-
-Here is the link to the bcftools info
-
-#+BEGIN_SRC sh
-
-# Go to the main directory
-cd ..
-git clone git://github.com/samtools/htslib.git
-git clone git://github.com/samtools/bcftools.git
-cd bcftools
-# The following is optional:
-#autoheader && autoconf && ./configure --enable-libgsl --enable-perl-filters
-make
-
-#+END_SRC
-*** Set environment variable for bcftools plugin
-#+BEGIN_SRC sh
-export BCFTOOLS_PLUGINS=../bcftools/plugins
-
-#+END_SRC
+Of note: 
+- this data preparation can only be performed on a server with sufficient memory (>= 128Gb) and large storage (>= 1TB).
+- It is assumed that bedtools, bcftools and R are installed on the analysis computer
 
 * Downloading required *data*
-We need six different data sources for ~varppRuleFit~:
+Six different data sources are required:
 
 1. [[https://cadd.gs.washington.edu/][CADD]]:
    "CADD is a tool for scoring the deleteriousness of single nucleotide variants as well as insertion/deletions variants in the human genome". The data set is very large, as it contains the location (chromosome and single base position), plus the CADD score for all those variants.
@@ -71,7 +31,7 @@ We need six different data sources for ~varppRuleFit~:
    "The Genome Aggregation Database (gnomAD), is a coalition of investigators seeking to aggregate and harmonize exome and genome sequencing data from a variety of large-scale sequencing projects, and to make summary data available for the wider scientific community". The data set contains information on allele frequencies across the human genome, that we will use for filtering out variants that are very frequent in at least one of the underlying poplulations, as we can safely assume, that they would not be pathogenic (otherwise the population with a high frequency of those variats would not exist).
 
 4. [[https://www.gtexportal.org/home/][GTEx V8]]:
-   "The Genotype-Tissue Expression (GTEx) project is an ongoing effort to build a comprehensive public resource to study tissue-specific gene expression and regulation." This is our main "workhorse" in ~varppRuleFit~. Rather than ranking genes only based on CADD as pathogenic or benign, we use tissue specific expression to do it.
+   "The Genotype-Tissue Expression (GTEx) project is an ongoing effort to build a comprehensive public resource to study tissue-specific gene expression and regulation." 
 
 5. [[https://www.ncbi.nlm.nih.gov/assembly/GCF_000001405.26/][GRCh38 (v26):]] 
    We need this file to get genomic coordinates for the GTEx data. We only use exons.
@@ -81,11 +41,8 @@ We need six different data sources for ~varppRuleFit~:
 ** CADD
 
 For the data download, we assume a folder ~varppData~, or similar is created, that contains a subfolder ~code~, where this orgfile is located.
-If this is the case, the whole script is self containing.
-(Once this is on a working git repo, it will be in a folder ~code~ or similar so the user does not have to set it up themselves)
+
 #+BEGIN_SRC sh
-# This takes forever and if it is already there
-# we actually do not need it again.
 # First, create a directory dedicated to CADD; this will be created in the current working directory.
 mkdir -p ../CADD
 cd ../CADD
@@ -98,12 +55,11 @@ wget https://krishna.gs.washington.edu/download/CADD/v1.6/GRCh38/whole_genome_SN
 mkdir -p ../ClinVar
 wget -nc -P ../ClinVar https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
 
-# There would have been a unzip step inbetwen...
+# unzip the file 
+unzip clinvar.vcf.gz
 
 # Extract level 5 clinical significant genes: 'Pathogenic'
-# This could easily be replaced by the bcftools filter like in the benign variant section
-#cat ../ClinVar/clinvar.vcf | grep 'CLNSIG' | grep 'Pathogenic' | awk {'print $1 , $2 , $3 , $4'} > ../ClinVar/ClinVar_pathogenic
-#<-----The above is incorrect, it also selects those with Pathogenic/Likely_pathogenic'
+# This could be replaced by the bcftools filter like in the benign variant section
 cat ../ClinVar/clinvar.vcf | grep 'CLNSIG' | grep 'Pathogenic;' | awk {'print $1="chr"$1 , $2-1 , $2 , $4'} | tr ' ' '\t'> ../ClinVar/ClinVar_pathogenic_correct
 
 sed -e'1i\CHROM\tPOS\tREF\tALT' ../ClinVar/ClinVar_pathogenic > ../ClinVar/ClinVar_patho
@@ -118,9 +74,8 @@ wget https://storage.googleapis.com/gnomad-public/release/3.0/vcf/genomes/gnomad
 
 #+END_SRC
 ** GTEx V8
-This is a bit more tricky, as we are not only just downloading the data, but we also perform some adjustments with the R package ~yarn~
+The download is performed via an adjustment of the yarn package.
 *** Install yarn package
-This obviously only needs to be done only once...
 #+BEGIN_SRC R :session yarn_install
 if (!requireNamespace("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
@@ -130,8 +85,7 @@ BiocManager::install("yarn")
 #+END_SRC
 *** Create download function for the GTExV8 data, using the package ~yarn~
 We can now use the yarn package to download GTExV8.
-!IMPORTANT!: This step also never needs to be repeated. Done once and the GTExV8 data is available.
-This code chunk starts a R session, as we will need to keep the contents to save the data in the next step. It is all self containing again.
+This code chunk starts a R session, as we will need to keep the contents to save the data in the next step.
 This first R chunk creates the function to download GTEx version 8, as the ~yarn~ package function is written to download V6.
 We need to install all the dependencies below as well, if they are not already on the system.
 #+BEGIN_SRC R :session download_gtex
@@ -241,7 +195,7 @@ downloadGTExV8 <- function (type = "genes", file = NULL, ...)
 mkdir ../GTExV8
 #+END_SRC
 *** Download GTExV8
-This downloads the data and saves it i nthe newly created GTEx folder.
+This downloads the data and saves it in the newly created GTEx folder.
 #+BEGIN_SRC R :session download_gtex
 gtex8 <- downloadGTExV8(type="genes", file="../GTExV8/gtex8.rds")
 #+END_SRC
@@ -298,22 +252,17 @@ gunzip 00-All.vcf.gz
 #+END_SRC
 
 * Data *preparation*
-There are now several steps required to arrive at our final three data sets (pathogenic variants, benign variants, GTExV8 tissue expression; we want those three files, as thos makes replacing the tissue expression data much easier. We can simply replace that file with any other data typle, like CAGE, or the HCL single cell data).
+There are now several steps required to arrive at our final two data sets (pathogenic variants, benign variants).
 For this, let's first reiterate what we want the final data to look like.
 
 1. Pathogenic variant file
    This needs to be a file, that contains the chromosome, the start and the end position, gene name, CADD score and allele frequency (already filtered)
 2. Benign variant file
    This file is the opposite of the pathogenic variant file. Here, we also need the same columns as in pathogenic, but we only save the benign variants.
-3. GTEx V8
-   This file will be a gene expression table with tissue types as columns and genes as rows.
-
-For these steps, we will use ~bedtools~ a lot. Except for the GTEx data preparation, this is a bit more tricky and requires some ~R~ code.
+3. Combine both with the GTEx expression data 
 
 ** GTExV8: Prepare .csv specificity/expression and bedfile
-*** Annotate the GTEx data correctly with GRCh38 annotations
-The previous annotation with biomaRt is incomplete; some gene names etc are missing, so here we use the
-GRCH38 genome to annotate the data correctly.
+*** Annotate the GTEx data with GRCh38 annotations
 #+BEGIN_SRC R :results output
 # Load libraries
 library(yarn)
@@ -368,22 +317,10 @@ colnames(gtex8@featureData@data)[7] <- "gene_biotype"
 saveRDS(gtex8, file="../GTExV8/gtexV8_annotated_with_GRCh38.rds")
 
 #+END_SRC
-
-It is important to note here, that four positions appear twice in the final file (overlapping exons are an issue, that we
-will tackle further down with ~bedtools merge~):
-
-| Start_position |
-|       33698261 |
-|       42692663 |
-|       49818279 |
-|       99141485 |
-
 *** Process 1: Renaming tissues. filtering and normalizing genes
 #+BEGIN_SRC R :session prepare_gtex
 library(yarn)
 library(tidyverse)
-#install.packages("rafalib")
-library(rafalib)
 
 gtex8 <- readRDS("../GTExV8/gtexV8_annotated_withGRCh38.rds")
 
@@ -407,15 +344,7 @@ pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Esophagus - Mucosa"] <- "Esophagus
 pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Esophagus - Muscularis"] <- "Esophagus - Muscularis"
 pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Heart - Atrial Appendage"] <- "Heart - Atrial Appendage"
 pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Heart - Left Ventricle"] <- "Heart - Left Ventricle"
-#pData(gtex8)$NormGroup[pData(gtex8)$SMTSD %in% c("Kidney - Cortex","Kidney - Medulla")] <- "Kidney"
 pData(gtex8)$NormGroup[pData(gtex8)$SMTSD %in% c("Skin - Not Sun Exposed (Suprapubic)","Skin - Sun Exposed (Lower leg)")] <- "Skin"
-
-
-#png( "../img/tissuenor.png",height=20,width=20,units="in",res=600)
-#mypar(7,6, brewer.name="Set3", brewer.n=41)
-#checkTissuesToMerge(gtex8, majorGroups="NormGroup", minorGroups="SMTSD") +
-#legend("topright",legend=levels(factor(pData(gtex8)$SMTSD)),fill=1:54,cex=0.75)
-#dev.off()
 
 # Filter genes with not enough samples
 gtex8.filtered <- filterLowGenes(gtex8, groups="NormGroup", minSamples=9)
@@ -426,9 +355,9 @@ gtex8.filtered <- normalizeTissueAware(gtex8.filtered, groups="NormGroup")
 saveRDS(gtex8.filtered, "../GTExV8/gtex8_normalises_and_filtered.rds")
 #+END_SRC
 *** Process 2: Calculate mean expression and create specificity
-
-*Specificity:* non-parametric specificity percentile scores (Hu, X. et al. Integrating autoimmune risk loci with gene-expression data
-identifies specific pathogenic immune cell subsets. Am. J. Hum. Genet. 89,496–506 (2011).)
+*Tissue Specificity*
+The definition of non-parametric specificity percentile scores can be found here: _Hu, X. et al. Integrating autoimmune risk loci with gene-expression data
+identifies specific pathogenic immune cell subsets. Am. J. Hum. Genet. 89,496–506 (2011)._
 #+BEGIN_SRC R
 
 # Load Libraries
@@ -497,21 +426,17 @@ Remove the header line:
 cat ../GTExV8/GTExV8.bed | sed '1d' > ../GTExV8/GTEx_final.bed
 #+END_SRC
 ** ClinVar: create bedfile
-We want to use bedtools in the end to merge the GTEx and ClinVar data based on position.
-For this, we need to extract the relevant columns from the Clinvar vcf file.
+We need to extract the relevant columns from the Clinvar vcf file.
 
-!IMPORTANT!: the command ~tr ' ' '\t'~ replaces the whitespace with a tab so we have a bedfile in the end.
 #+BEGIN_SRC sh
 cat ../ClinVar/ClinVar_patho | sed '1d' | awk {'print $1="chr"$1, $2, $2'} | tr ' ' '\t' > ClinVar.bed
 #+END_SRC
-
 ** Summarize the Clinvar data to have all CLNSIG values in one column
 As Denise commented that she only selected unambiguous variants, where all infor said Pathogenic
 
 #+BEGIN_SRC sh
 bcftools query -f '%CHROM\t%POS\t%INFO/CLNSIG\n' clinvar.vcf | awk {'print $1="chr"$1, $2-1, $2, $3'} | tr ' ' '\t' | bedtools merge -i - -c 4 -o collapse > TEST.csv
 #+END_SRC
-
 
 ** Extract the unambiguous pathogenic variants
 #+BEGIN_SRC R
@@ -546,21 +471,15 @@ write_delim(patho, "clinvar_patho.bed", delim='\t', col_names=FALSE)
 The CADD data columns are:
 | #Chrom | Pos | Ref | Alt | RawScore | PHREDf |
 
-ONLY DO THIS ONE!
-The CADD process takes very long, because the file is so large.
 #+BEGIN_SRC sh
-#cat ../CADD/whole_genome_SNVs.tsv | sed '1,2d' > ../CADD/CADD.bed
 cd ../CADD
-# Here we include the 5th column, as this is the CADD score. We need to merge this into the
-# intersect data
+# Here we include the 5th column, as this is the CADD score.
 # The $2-1 is necessary as for bedtools we need distinct positions. Even if it is just a single base, we need the start and end. and that would 
 # be start = start -1
-#cat ../CADD/CADD.bed | awk {'print $1="chr"$1, $2-1, $2, $5'} | tr ' ' '\t'  > ../CADD/CADD_final.bed
 zcat whole_genome_SNVs.tsv.gz  | sed '1,2d' | awk {'print $1="chr"$1, $2-1 ,$2, $5, $6'} | tr ' ' '\t' | gzip > CADD_both_scores.bed.gz
 #+END_SRC
-
 ** dbSNP: create bedfile
-First, we use bcftools to extract the information we need for the bedfile
+~bcftools~ to extract the information we need for the bedfile
 #+BEGIN_SRC sh
 # Extract Chromosome, position, Ref and Alt
 ../bcftools/bcftools query -f '%CHROM %POS %REF %ALT\n' ../dbSNP/00-All.vcf > ../dbSNP/dbSNP.bed
@@ -579,19 +498,14 @@ bedtools sort -i ../dbSNP/dbSNP.bed > ../dbSNP/dbSNP_sorted.bed
   
 ** Get the ClinVar subset that is in GTEx.
 #+BEGIN_SRC sh
-# this is incorrect!
-#/home/ubuntu/bedtools instersect -wa -wb -a ../GTExV8/GTEx_final.bed  -b ../ClinVar/ClinVar_pathogenic > ../GTExV8/GTEx_ClinVar
-
 /home/ubuntu/bedtools instersect -wa -wb -a ../GTExV8/GTEx_final.bed  -b ../ClinVar/clinvar_patho.bed > ../GTExV8/GTEx_ClinVar
-
-
 
 cat ../GTExV8/GTEx_ClinVar | awk {'print $6, $7, $8'} | tr ' ' '\t' > ../ClinVar/ClinVar_subset.bed
 
 /home/ubuntu/bedtools sort -i ../ClinVar/ClinVar_subset.bed > ../ClinVar/ClinVar_subset_sorted.bed
 rm ../ClinVar/ClinVar_subset.bed
 
-#Now, we make sure that we only keep unique locations, as there might be overlapping exons
+# Now, we make sure that we only keep unique locations, as there might be overlapping exons
 cat ../ClinVar/ClinVar_subset_sorted.bed | bedtools merge -i - > ../ClinVar/ClinVar_unique_GTEx
 
 cat ClinVar_unique_GTEx | awk {'print $1, $2-1, $2'} | tr ' ' '\t' > CLINI
@@ -601,30 +515,17 @@ mv CLINI ClinVar_unique_GTEx
 #+END_SRC
 
 ** Intersect CADD and ClinVar/GTEx subset
-We need the CADD score for the ClinVar pathogenic variants, hence I used bedtools intersect above to get the overlap
-between ClinVar (only the ones labelled as pathogenic) and GTEx. Then I used interesect again to get
+We need the CADD score for the ClinVar pathogenic variants, hence we used bedtools intersect above to get the overlap
+between ClinVar (only the ones labelled as pathogenic) and GTEx. Then we used interesect again to get
 the overlap between the ClinVar_GTEx-bedfile and CADD.
 
-This step takes quite some time, so better to not perform over and over again.
-Should only be done once to prepare the data
 #+BEGIN_SRC sh
 cd ../ClinVar
-
-#/home/ubuntu/bedtools intersect -wa -wb -a ClinVar_unique_GTEx -b ../CADD/CADD_both_scores.bed.gz  -sorted > ClinVar_CADD_subset.bed
-
 /home/ubuntu/bedtools intersect -wa -wb -a ClinVar_unique_GTEx -b ../CADD/CADD_both_scores.bed.gz  -sorted | awk {'print $1,$2,$3,$7,$8'} | tr ' ' '\t' >  ClinVar_CADD_subset.bed
-#/home/ubuntu/bedtools intersect -wa -wb -a ClinVar_unique_GTEx -b ../CADD/CADD_final_correct_position.bed  -sorted > ClinVar_CADD_subset.bed
-#+END_SRC
 
-This is awesome! It returns the unique locations and the maximum CADD value per group!
-#+BEGIN_SRC sh
+#This returns the unique locations and the maximum CADD value per group.
 cd ../GTExV8
 /home/ubuntu/bedtools merge -i ClinVar_CADD_subset.bed -c 4,5 -o max,max > FINAL_GTEX_CADD.bed
-
-# The below saves my already created file
-#cat FINAL_GTEX_CADD.bed | cut -f1,2,3,4,8,9 | /home/ubuntu/bedtools merge -i - -c 4,5,6 -o max,distinct,distinct > FINAL
-
-#mv FINAL FINAL_GTEX_CADD.bed
 #+END_SRC
 
 ** gnomAD
@@ -633,7 +534,7 @@ Thankfully, bedtools works with vcf/bcf files and we can sort our pathogenic var
 which is a very small file.
 
 *** Generate pathogenic_file folder and pathogenic.bed file
-The ~pathogenic_file~ directory will contain the final pathogenic file (as the naming indicates).
+The ~pathogenic_file~ directory will contain the final pathogenic file.
 Hence, we create the directory and add the bedfile with the CADD scores, genomic locations, gene information and ClinVar pathogenic
 variants to it.
 
@@ -644,9 +545,8 @@ cp ../GTExV8/FINAL_GTEX_CADD.bed ../pathogenic_file/pathogenic.bed
 #+END_SRC
 
 *** version sort pathogenic.bed
-The gnomAD file seems to be sorted chr1, chr2, chr3 etc, while the pathogenic.bed file is sorted chr1, chr10, chr11..
-I believe this is why we get an issue once we arrive at chromosome 9 with bedtools intersect. So we sort the 
-pathogenic.bed file also to chr1, chr2, chr3 etc and try intersect again.
+The gnomAD file seems to be sorted chr1, chr2, chr3 etc, while the pathogenic.bed file is sorted chr1, chr10, chr11.
+So we sort the pathogenic.bed file also to chr1, chr2, chr3 etc.
 
 #+BEGIN_SRC sh
 cd ../pathogenic_file
@@ -655,25 +555,18 @@ cd ../pathogenic_file
 sort -V -k1,1 -k2,2 pathogenic.bed > pathogenic_version_sorted.bed
 
 # Then we use bedtools intersect. -wao settings to return also those variants that are in clinvar, but not in gnomAD, as they are very very rare probably
-#bedtools intersect -wao -wb -a pathogenic_version_sorted.bed -b ../gnomAD/gnomad.genomes.r3.0.sites.vcf.bgz -sorted > patho_gnomAD
-
 bedtools intersect -wao  -a pathogenic_version_sorted.bed -b ../gnomAD/gnomad_SNV.vcf.bgz -sorted > patho_gnomAD
 #+END_SRC
 
 *** Create the pathogenic file
-Now, we can create the final pathogenic file. We first extract the allele frequencies across all populations:
-
 *IMPORTANT*
-The sort command requires the ~-g~ setting, as this includes scientific numbers as well. The reason I did not simply use the same bcftools filter command I used further down in the benign variants is, that the condition would be ~AF_X > 0.01 & AF_Y >0.01~ etc. Including all possible ~AF_~ in the gnomAD file. However, not all rows contain the same AF's and that means the condition of all AF_'s in the gnomAD file are not true, even though all given AF_'s for this row are indeed >0.01. The below code is inefficiently slow on larger scales, but for the relatively small number of pathogenic variants (~8,0000), this works still very fast ( ~1-2 minutes).
+The sort command requires the ~-g~ setting, as this includes scientific numbers as well. The reason we did not simply use the same bcftools filter command we used further down in the benign variants is, that the condition would be ~AF_X > 0.01 & AF_Y >0.01~ etc. Including all possible ~AF_~ in the gnomAD file. However, not all rows contain the same AF's and that means the condition of all AF_'s in the gnomAD file are not true, even though all given AF_'s for this row are indeed >0.01. The below code is inefficiently slow on larger scales, but for the relatively small number of pathogenic variants (~8,0000), this works still very fast ( ~1-2 minutes).
 #+BEGIN_SRC bash
 # Enter the pathogenic file directory
 cd ../pathogenic_file
 
 # Create the gnomAD annotated pathogenic bedfile
 cat patho_gnomAD | awk {'print $1, $2, $3, $4, $5, $13'} | tr ' ' '\t' > pathogenic_gnomAD.bed
-# This is a note: TEST.bed | awk {'print $1, $2, $3, $4, $5, $6, $14'} | tr ' ' '\t' > correct_patho_gnomAD.bed
-# TEST is actually the correct data. We have selected all -a locations in bedtools rather than only overlapping 
-# Create a file that will contain the AF values
 touch AF_values_gnomAD.txt
 
 # specify the gnomAD annotated pathogenic file we created above
@@ -689,11 +582,7 @@ while read line; do
     done < "$filename"
 #+END_SRC
 
-#+RESULTS:
-
-
-
-As we have NAs and numbers in the AF column, I need to write a script to get those lines that have an NA or a value <=0.01
+As we have NAs and numbers in the AF column, we need to write a script to get those lines that have an NA or a value <=0.01
 
 #+BEGIN_SRC sh
 # Enter the pathogenic directory again
@@ -705,9 +594,8 @@ cd ../pathogenic_file
 cat patho_gnomAD | awk {'print $1, $2, $3, $4, $5'} > patho_2 
 
 # Add the maximum allele frwquency as a column to the pathogenic variant file
-#paste -d'\t' patho_2 AF_values_gnomAD.txt  | awk {'print $1, $2, $3, $5, $6, $4, $7'} | tr ' ' '\t' > PATHOGENIC
 paste -d'\t' patho_2 AF_values_gnomAD.txt  | tr ' ' '\t' > PATHOGENIC
-# this awk command replaces values; in replacing the NA with 0, I make sure the allele frequency of those very rare variants will stay in 
+# This awk command replaces values; in replacing the NA with 0, I make sure the allele frequency of those very rare variants will stay in 
 # The gsub command is taken from this website : https://www.cyberciti.biz/faq/awk-find-and-replace-fields-values/
 cat PATHOGENIC | awk {'gsub("NA","0",$6); print'} | tr ' ' '\t' | /home/ubuntu/bedtools merge -i - -c 4,5,6 -o max,max,max | awk {'if($6 <=0.01) {print}'} > PATHOGENIC_merged
 rm PATHOGENIC
@@ -727,16 +615,12 @@ cat PATHOGENIC | sed '1d' | cut -f1,2,3,4,5 | tr ' ' '\t' > PATHOGENIC.bed
 
 echo 'Pathogenic variant file created!!!'
 #+END_SRC
-
-#+RESULTS:
-: Pathogenic variant file created!!!
-
 * Create *benign variant files*
 The creation of the benign variant file requires the following steps:
 
 1. ~bedtools intersect~ with the ~-v~ setting: This returns all entries in the bedfile A, that are not in bedfile B.
    That means, we use our GTEx locations as A and the ClinVar locations as B. We will then get all the locations/genes
-   from GTEx, that are not in ClinVar. CAVEAT: I have subsetted ClinVar to the pathogenic variants in the creation of the pathogenic variant file.
+   from GTEx, that are not in ClinVar. CAVEAT: We have subsetted ClinVar to the pathogenic variants in the creation of the pathogenic variant file.
    Here, we obviously need the full ClinVar data set, as we will stay consistent with the ~VARPP~ paper, where all variants that were mentioned in ClinVar
    are excluded.
 2. We do not annotate the benign genes with all possible 9 billion CADD single base locations. We downloaded ~dbSNP~ for this purpose. This database includes
@@ -755,7 +639,7 @@ mkdir -p ../benign_file
 ** Intersect the locations with dbSNP
 
 We intersect the GTEx benign variants with dbSNP first, to get the locations of known variants.
-/New/: We subsetted the dbSNP data to only contain the SNVs
+We subsetted the dbSNP data to only contain the SNVs
 #+BEGIN_SRC sh
 
 cat ../dbSNP/00-All.vcf | grep 'SNV' > dbSNP_SNV_only
@@ -784,7 +668,7 @@ The file we need will still be created, this just indicates that the GTEx benign
 *MT* genes (mitochondrial).
 
 ** Intersect GTEx and dbSNP benign variants with CADD
-Now, we get the CADD scores for all the locations we extracted in the previous step
+Now, we get the CADD scores for all the locations we extracted in the previous step.
 
 #+BEGIN_SRC sh
 cd ../benign_file
@@ -806,7 +690,6 @@ We need the allele frequency for all the benign variants, as our final check: we
 larger than 0.01 in at least one population in gnomAD.
 
 /A note about this:/ There is a field in the gnomAD data, that indicates ~variant_type~ as ~snv~. 
-So for the merge, it might be worth piping it through an snv filter?
 ~bcftools~ can be used to filter out only the snvs:
 
 #+BEGIN_SRC 
@@ -819,17 +702,11 @@ bcftools view -v snps  -O z -o gnomad_snv_only.vcf.bgz gnomad.genomes.r3.0.sites
 ~-o~: output file name
 
 
-The below is the bottleneck: Extracting the max allele frequency with the sort and grep is very, very inefficient and takes days...
+The below is the bottleneck: Extracting the max allele frequency with the sort and grep is very, very inefficient and takes days.
 The intersect with CADD and gnomAD is done overnight.
-
-The ~intersect~ step leads to /178,577,003/ rows/variants. These contain duplicates, as ~bedtools merge~ was not done yet. We need to keep this, as we add the allele frequencies to it and then sort out the ones with an AF <0.01.
-
-
-/NOTE for the future:/ Replace a dot with a zero: ~sed  's/\s\.\s/\t0\t/g'~
-
+The ~intersect~ step leads to /178,577,003/ rows/variants. These contain duplicates, as ~bedtools merge~ was not applied yet. We need to keep this, as we add the allele frequencies to it and then sort out the ones with an AF <0.01.
 ** The final intersect with gnomAD
 Here we get the gnomAD and CADD final benign variant file.
-
 We pipe the bcftools filter of any allele frequency larger than 0.01 into the bedtools intersect function to get the final gnomAD file with the CADD annotation.
 
 *** First we get all the different AF names to filter by
@@ -859,7 +736,6 @@ bcftools filter -i 'INFO/AF_eas_female > 0.01 | INFO/AF_afr_male > 0.01 | INFO/A
 
 #+END_SRC
 
-
 *** Bedtools merge for the final benign variant file
 As there are duplications in the coordinates, due to several different snps at that point, we need to use bedtools merge again and select the maximum CADD score over the duplicate rows.
 
@@ -867,13 +743,9 @@ As there are duplications in the coordinates, due to several different snps at t
 bedtools merge -i TEST_BENIGN_TEST -c 4,5,6 -o distinct,distinct,max > ../benign_file/final_benign_variants.bed
 #+END_SRC
 
-
 ** Reduce the number of benign variants
 We have more than 6 million benign variants, which is quite excessive. There is a nice [[https://gist.github.com/mrdwab/6424112][R function]] that allows to downsample the data by being group sensitive.
-Further, some variants have no clear annotation, which means ther are two or more genes listed. We will first filter those out.
-
-/Note:/ Of course, if one wants to induce another layer of randomness and input data independentness, one could randomly subsample from the list of benign variants for every run of VARPP. In the light of reproducibility, however, we want to avoid this. It would be interesting, though, to see if there are dramatic differences between results of different benign variant subsets.
-
+Further, some variants have no clear annotation, which means there are two or more genes listed. We will first filter those out.
 #+BEGIN_SRC R :session downsample_benign
 stratified <- function(df, group, size, select = NULL, 
                        replace = FALSE, bothSets = FALSE) {
@@ -960,68 +832,9 @@ cd ../benign_file
 rm BENIGN.bed
 #+END_SRC
 
-
-
-** Old and redundant,but handy to keep
-#+BEGIN_SRC sh
-cd ../benign_file
-
-# I believe I will first need to sort the data so it is chr1 chr2 etc, as this is how the gnomAD data is sorted..
-cat benign_with_CADD.bed | sort -k1,1V -k2,2n > benign_with_CADD_sorted.bed
-
-# This does all at once: intersecting gnomad and benign variants, but the nonly returns the AF's
-# So intersect will need to be done twice, in the second step only returning all of a, none of b and the nadd the AF column to it
-#bedtools intersect -wa -wb -a benign_with_CADD.bed -b ../gnomAD/gnomad.genomes.r3.0.sites.vcf.bgz -sorted | awk {'print $1, $2, $3, #$4, $5, $6, $14'} | tr ' ' '\t' | while read p; do echo $p | egrep -o 'AF_[a-zA-Z]*[(:?_a-zA-Z)]*[=][-+]?[0-9]*\.?[0-9]*[^;]+' |  #grep -v 'AF_raw' | cut -d "=" -f2 | sort -r | head -n 1 >> AF_values_gnomAD.txt; done
-
-
-# This is the code we are using, as we only need the SNVs from the gnomAD data
-bedtools intersect -wa -wb -a benign_with_CADD_sorted.bed -b ../gnomAD/gnomad_SNV.vcf.bgz -sorted | awk {'print $1, $2, $3, $4, $5, $6, $14'} | tr ' ' '\t' | while read p; do echo $p | egrep -o 'AF_[a-zA-Z]*[(:?_a-zA-Z)]*[=][-+]?[0-9]*\.?[0-9]*[^;]+' |  grep -v 'AF_raw' | cut -d "=" -f2 | sort -r | head -n 1 >> AF_values_gnomAD.txt; done
-
-
-
-
-# This is the insane crazy way of doing the whole thing with bcftools
-bcftools query -u -f '%CHROM\t%POS\t%POS\t%AF_asj_female\t%AF_eas_female\t%AF_afr_male\t%AF_female\t%AF_fin_male\t%AF_oth_female\t%AF_ami\t%AF_oth\t%AF_male\t%AF_ami_female\t%AF_afr\t%AF_eas_male\t%AF_sas\t%AF_nfe_female\t%AF_asj_male\t%AF_oth_male\t%AF_nfe_male\t%AF_asj\t%AF_amr_male\t%AF_amr_female\t%AF_sas_female\t%AF_fin\t%AF_afr_female\t%AF_sas_male\t%AF_amr\t%AF_nfe\t%AF_eas\t%AF_ami_male\t%AF_fin_female\n' gnomad_SNV.vcf.bgz | sed  's/\s\.\s/\t0\t/g' | cut -f4-32 | while read p; do echo $p | tr '\t' '\n' | sort -r | head -n 1 >> AF_SNPS_gnomAD; done
-
-
-
-# Second merge step (can run in parallel to the first one)
-#bedtools intersect -wa -a benign_with_CADD_sorted.bed -b ../gnomAD/gnomad.genomes.r3.0.sites.vcf.bgz -sorted | cut -f1,2,3,4,5,6 > benign_gnomAD_snv.bed
-
-#This is the code we use, again, because we only need the SNVs from 
-bedtools intersect -wa -a benign_with_CADD_sorted.bed -b ../gnomAD/gnomad_SNV.vcf.bgz -sorted | cut -f1,2,3,4,5,6 > benign_gnomAD.bed
-
-
-# IMPORTANT: make sure the two files have the same line length, then merge
-
-# Add the allele frequencies to the positions CAREFUL! We want the right locations in this step. So check if
-# $1 t o$3 are really correct.
-paste -d'\t' benign_gnomAD.bed AF_values_gnomAD.txt  | awk {'print $1, $2, $3, $5, $6, $4, $7'} | tr ' ' '\t' > BENIGN
-
-# Extract the variants that have an allele frequency of > 0.01
-
-cat BENIGN | awk '$7>0.01' | tr ' ' '\t' > FINAL_BENIGN
-#+END_SRC
-
-
-
-This takes forever. And by that I mean several days. Currently it is running the third day and we have extracted 31,057,881 allele frequencies. That is probably because we do this in parallel with intersect, I assume?
-
-Testing alternatives to get the maximum values
-#+BEGIN_SRC 
-bedtools intersect -wa -wb -a benign_with_CADD.bed -b ../gnomAD/gnomad.genomes.r3.0.sites.vcf.bgz -sorted | awk {'print $14'} | tr ' ' '\t' | while read p; do echo $p | egrep -o 'AF_[a-zA-Z]*[(:?_a-zA-Z)]*[=][-+]?[0-9]*\.?[0-9]*[^;]+' |  grep -v 'AF_raw' | cut -d "=" -f2 | tr '\n' '\t' >> AF_TEST.txt; done
-
-#+END_SRC
-
-
-
-
-
-
 * Final GTEx benign and pathogenic files
   
 ** Prepare GTEx benign
-
 *** Get the CADD PHRED score
 
 First, get the CADD Phred score as well, which is the scaled CADD score. 
@@ -1033,7 +846,6 @@ bedtools intersect -wa -wb -a ../benign_file/BENIGN_SORTED.bed -b CADD_both_scor
 
 #+END_SRC
 
-This step can obviously be changed. If we use the HCL data, we simply intersect the HCL data with the benign variant file.
 
 #+BEGIN_SRC sh 
 cd ../benign_file
@@ -1042,7 +854,6 @@ cd ../benign_file
 #rm VARPP_$HPO
 #+END_SRC
 
-#+RESULTS:
 
 Make a directory for the final VARPP data
 #+BEGIN_SRC sh
@@ -1050,7 +861,6 @@ cd ../
 mkdir VARPP_DATA
 #+END_SRC
 
-#+RESULTS:
 
 Now, in R, we add the column names and put the file into the right order for VARPP
 
@@ -1092,8 +902,6 @@ benign_final <- benign_final[,c(gene_info, tissues)]
 write_csv(benign_final, "../VARPP_DATA/benign_variant_file_NEW.csv")
 #+END_SRC
 
-#+RESULTS:
-
 ** Prepare GTEx pathogenic
 #+BEGIN_SRC sh 
 cd ../pathogenic_file
@@ -1101,8 +909,6 @@ cd ../pathogenic_file
 /home/ubuntu/bedtools intersect -wa -wb  -a ../GTExV8/gtex.bed -b  PATHOGENIC.bed | cut -f1-47,51,52 | /home/ubuntu/bedtools sort -i - > PATHOGENIC_GTEX_new.bed
 #rm VARPP_$HPO
 #+END_SRC
-
-#+RESULTS:
 
 Now, in R, we add the column names and put the file into the right order for VARPP
 
@@ -1143,11 +949,8 @@ patho_final <- patho_final[,c(gene_info, tissues)]
 write_csv(patho_final, "../VARPP_DATA/pathogenic_variant_file_unambiguous.csv")
 #+END_SRC
 
-#+RESULTS:
-
-
-* Get CADD PHRED score
-so far I have been getting the CADD raw score, which might not be ideal. So in this stepp, I will also get the PHRED score.
+* CADD PHRED score
+So far we have been retaining the CADD raw score, which might not be ideal. So in this step, we will also get the PHRED score.
 For this, we can simply use the file we created above: ~PATHOGENIC.bed~, which has the coordinates for the pathogenic variants we extracted.
 
 #+BEGIN_SRC sh
@@ -1160,12 +963,11 @@ zcat whole_genome_SNVs.tsv.gz  | sed '1,2d' | awk {'print $1, $2-1 ,$2, $5, $6'}
 
 #+END_SRC
 
-
-
-* Extra stuff
+* Unambiguous pathogenicity based on CLinVar
 
 ** Summarize the Clinvar data to have all CLNSIG values in one column
-As Denise commented that she only selected unambiguous variants, where all infor said Pathogenic
+The above data set contains level 4 and 5 pathogenic variants (likely pathogenic and pathogenic).
+To have an unambiguous data set, we can select the level 5 (pathogenic) variants only.
 
 #+BEGIN_SRC sh
 bcftools query -f '%CHROM\t%POS\t%INFO/CLNSIG\n' clinvar.vcf | awk {'print $1="chr"$1, $2-1, $2, $3'} | tr ' ' '\t' | bedtools merge -i - -c 4 -o collapse > TEST.csv
