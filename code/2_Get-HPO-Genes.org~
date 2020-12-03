@@ -1,0 +1,26 @@
+* How to retrieve the HPO term related seed gene list
+In order to perform the HPO term specific classification task, we need to subset our pathogenic variant file to only contain variants
+associated with phenotype related genes.  
+Hence, we use the [[http://phenolyzer.wglab.org/][phenolyzer]] command line tool to retrieve the list og genes associated with the HPO terms. In principle, any other tool can be used to
+do this, and one could even extract a list of genes from https://hpo.jax.org/ and subset the pathogenic variant file based on these.
+
+We used phenolyzer to be in line with what was done in our previous publication, introducing VARPP.
+
+Just as in the VARPP 1.0 publication, the phenolyzer settings were: 
+#+BEGIN_SRC 
+-p -ph -logistic -addon B_DISGENET_GENE_DISEASE_SCORE,DB_GAD_GENE_DISEASE_SCORE 
+-addon_weight 0.25, 
+#+END_SRC
+and only the genes with a known disease association were taken forward (seed genes in phenolyzer).
+
+** Download ~phenolyzer~
+#+BEGIN_SRC sh
+FILE=phenolyzer
+if [ -d "$FILE" ]; then
+echo "$FILE already downloaded"
+else
+git clone https://github.com/WGLab/phenolyzer
+fi
+#+END_SRC
+
+
