@@ -1,0 +1,1003 @@
+#+AUTHOR: Sebastian Rauschert, Denise Anderson, Timo Lassmann
+#+TITLE: Supplement: Prepare Pathogenic and benign variant files
+#+DATE: 17.09.2020
+
+
+* Overview 
+This org-file contains all steps to prepare the pathogenic and benign variant files utilised in the publication.
+We only need to prepare those files once, and in case new versions of CADD, ClinVar or GTEx are released, we can update these
+data sets.  
+
+The structure of this org-file is the following:  
+1. Downloading the required data (ClinVar, CADD, gnomAD, GTExV8, dbSNP)
+2. Preparing the data
+3. Creating the pathogenic variant file
+4. Creating the benign variant file 
+
+Of note: 
+- this data preparation can only be performed on a server with sufficient memory (>= 128Gb) and large storage (>= 1TB).
+- It is assumed that bedtools, bcftools and R are installed on the analysis computer
+
+* Downloading required *data*
+Six different data sources are required:
+
+1. [[https://cadd.gs.washington.edu/][CADD]]:
+   "CADD is a tool for scoring the deleteriousness of single nucleotide variants as well as insertion/deletions variants in the human genome". The data set is very large, as it contains the location (chromosome and single base position), plus the CADD score for all those variants.
+
+2. [[https://www.ncbi.nlm.nih.gov/clinvar/][ClinVar]]:
+   ClinVar is a public database of genetic variants that have been associated with a disease. It is a curated data set and updated in regular intervalls. We use this data set, to identify those variants, that are classified as pathogenic.
+
+3. [[https://gnomad.broadinstitute.org/about][gnomAD]]:
+   "The Genome Aggregation Database (gnomAD), is a coalition of investigators seeking to aggregate and harmonize exome and genome sequencing data from a variety of large-scale sequencing projects, and to make summary data available for the wider scientific community". The data set contains information on allele frequencies across the human genome, that we will use for filtering out variants that are very frequent in at least one of the underlying poplulations, as we can safely assume, that they would not be pathogenic (otherwise the population with a high frequency of those variats would not exist).
+
+4. [[https://www.gtexportal.org/home/][GTEx V8]]:
+   "The Genotype-Tissue Expression (GTEx) project is an ongoing effort to build a comprehensive public resource to study tissue-specific gene expression and regulation." 
+
+5. [[https://www.ncbi.nlm.nih.gov/assembly/GCF_000001405.26/][GRCh38 (v26):]] 
+   We need this file to get genomic coordinates for the GTEx data. We only use exons.
+
+6. [[https://ftp.ncbi.nih.gov/snp/organisms/human_9606/VCF/][dbSNP]]: "The Single Nucleotide Polymorphism database (dbSNP) is a public-domain archive for a broad collection of simple genetic polymorphisms. This collection of polymorphisms includes single-base nucleotide substitutions (also known as single nucleotide polymorphisms or SNPs), small-scale multi-base deletions or insertions (also called deletion insertion polymorphisms or DIPs), and retroposable element insertions and microsatellite repeat variations (also called short tandem repeats or STRs). [...] for the term SNP. Each dbSNP entry includes the sequence context of the polymorphism (i.e., the surrounding sequence), the occurrence frequency of the polymorphism (by population or individual), and the experimental method(s), protocols, and conditions used to assay the variation." We need this database for the selection of benign variants.
+
+** CADD
+
+For the data download, we assume a folder ~varppData~, or similar is created, that contains a subfolder ~code~, where this orgfile is located.
+
+#+BEGIN_SRC sh
+# First, create a directory dedicated to CADD; this will be created in the current working directory.
+mkdir -p ../CADD
+cd ../CADD
+wget https://krishna.gs.washington.edu/download/CADD/v1.6/GRCh38/whole_genome_SNVs.tsv.gz
+
+#+END_SRC
+** ClinVar
+#+BEGIN_SRC sh
+# Again, we start with creating a directory for the data
+mkdir -p ../ClinVar
+wget -nc -P ../ClinVar https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz
+
+# unzip the file 
+unzip clinvar.vcf.gz
+
+# Extract level 5 clinical significant genes: 'Pathogenic'
+# This could be replaced by the bcftools filter like in the benign variant section
+cat ../ClinVar/clinvar.vcf | grep 'CLNSIG' | grep 'Pathogenic;' | awk {'print $1="chr"$1 , $2-1 , $2 , $4'} | tr ' ' '\t'> ../ClinVar/ClinVar_pathogenic_correct
+
+sed -e'1i\CHROM\tPOS\tREF\tALT' ../ClinVar/ClinVar_pathogenic > ../ClinVar/ClinVar_patho
+rm ../ClinVar/ClinVar_pathogenic
+#+END_SRC
+** gnomAD
+This takes several hours, best to download overnight.
+#+BEGIN_SRC sh
+# Again, create a new directory for the data
+mkdir -p ../gonmAD
+wget https://storage.googleapis.com/gnomad-public/release/3.0/vcf/genomes/gnomad.genomes.r3.0.sites.vcf.bgz
+
+#+END_SRC
+** GTEx V8
+The download is performed via an adjustment of the yarn package.
+*** Install yarn package
+#+BEGIN_SRC R :session yarn_install
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("yarn")
+
+#+END_SRC
+*** Create download function for the GTExV8 data, using the package ~yarn~
+We can now use the yarn package to download GTExV8.
+This code chunk starts a R session, as we will need to keep the contents to save the data in the next step.
+This first R chunk creates the function to download GTEx version 8, as the ~yarn~ package function is written to download V6.
+We need to install all the dependencies below as well, if they are not already on the system.
+#+BEGIN_SRC R :session download_gtex
+library(yarn)
+
+# Load all the dependencies (of note, these all need to be installed)
+library ("repmis")
+library ("Rgraphviz")
+library ("ggplot2")
+library ("gridExtra")
+library ("reshape")
+library ("org.Hs.eg.db")
+library ("NMF")
+library ("GenomicFeatures")
+library ("doBy")
+library ("plyr")
+library ("WriteXLS")
+library ("ontologyIndex")
+library ("PRROC")
+library ("yarn")
+library ("readr")
+library ("data.table")
+library ("randomForest")
+library ("parallel")
+library ("precrec")
+library ("dplyr")
+library ("caret")
+library ("CAGEr")
+library ("e1071")
+library ("ranger")
+library ("MLmetrics")
+library ("OOBCurve")
+library ("genefilter")
+library ("GeneOverlap")
+library ("ontologyPlot")
+library("biomaRt")
+library ("BiocGenerics")
+
+# We need to set the downloadGTEx.fixed function
+downloadGTExV8 <- function (type = "genes", file = NULL, ...)
+{
+    phenoFile  <- "https://storage.googleapis.com/gtex_analysis_v8/annotations/GTEx_Analysis_v8_Annotations_SampleAttributesDS.txt"
+    pheno2File <- "https://storage.googleapis.com/gtex_analysis_v8/annotations/GTEx_Analysis_v8_Annotations_SubjectPhenotypesDS.txt"
+    geneFile   <- "https://storage.googleapis.com/gtex_analysis_v8/rna_seq_data/GTEx_Analysis_2017-06-05_v8_RNASeQCv1.1.9_gene_reads.gct.gz"
+    message("Downloading and reading files")
+    pdFile <- tempfile("phenodat", fileext = ".txt")
+    download.file(phenoFile, destfile = pdFile)
+    pd <- read_tsv(pdFile)
+    pd <- as.matrix(pd)
+    rownames(pd) <- pd[, "SAMPID"]
+    ids <- sapply(strsplit(pd[, "SAMPID"], "-"), function(i) paste(i[1:2],
+        collapse = "-"))
+    pd2File <- tempfile("phenodat2", fileext = ".txt")
+    download.file(pheno2File, destfile = pd2File)
+    pd2 <- read_tsv(pd2File)
+    pd2 <- as.matrix(pd2)
+    rownames(pd2) <- pd2[, "SUBJID"]
+    pd2 <- pd2[which(rownames(pd2) %in% unique(ids)), ]
+    pd2 <- pd2[match(ids, rownames(pd2)), ]
+    rownames(pd2) <- colnames(counts)
+    pdfinal <- AnnotatedDataFrame(data.frame(cbind(pd, pd2)))
+    if (type == "genes") {
+        countsFile <- tempfile("counts", fileext = ".gz")
+        download.file(geneFile, destfile = countsFile)
+        cnts <- suppressWarnings(read_tsv(countsFile, skip = 2))
+        genes <- unlist(cnts[, 1])
+        geneNames <- unlist(cnts[, 2])
+        counts <- cnts[, -c(1:2)]
+        counts <- as.matrix(counts)
+        rownames(counts) <- genes
+        for (i in 1:nrow(problems(cnts))) {
+            counts[problems(cnts)$row[i], problems(cnts)$col[i]] <- 1e+05
+        }
+        throwAway <- which(rowSums(counts) == 0)
+        counts <- counts[-throwAway, ]
+        genes <- sub("\\..*", "", rownames(counts))
+        #host <- "dec2013.archive.ensembl.org"
+        #biomart <- "ENSEMBL_MART_ENSEMBL"
+        #dataset <- "hsapiens_gene_ensembl"
+        attributes <- c("ensembl_gene_id", "hgnc_symbol", "chromosome_name",
+            "start_position", "end_position","strand", "gene_biotype")
+    }
+    message("Creating ExpressionSet")
+    pdfinal <- pdfinal[match(colnames(counts), rownames(pdfinal)),
+        ]
+    es <- ExpressionSet(as.matrix(counts))
+    phenoData(es) <- pdfinal
+    #pData(es)["GTEX-YF7O-2326-101833-SM-5CVN9", "SMTS"] <- "Skin"
+    #pData(es)["GTEX-YEC3-1426-101806-SM-5PNXX", "SMTS"] <- "Stomach"
+
+# This step is not annotating everything correctly, so later, we need to annotate the data with
+# the gencode annotation file (GRCh38/hg19, v26)
+    message("Annotating from biomaRt")
+    es <- annotateFromBiomart(obj = es, genes = genes, attributes = attributes)
+    message("Cleaning up files")
+    unlink(pdFile)
+    unlink(pd2File)
+    unlink(countsFile)
+    if (!is.null(file))
+        saveRDS(es, file = file)
+    return(es)
+}
+
+#+END_SRC
+*** Make a directory for GTExV8
+#+BEGIN_SRC sh
+mkdir ../GTExV8
+#+END_SRC
+*** Download GTExV8
+This downloads the data and saves it in the newly created GTEx folder.
+#+BEGIN_SRC R :session download_gtex
+gtex8 <- downloadGTExV8(type="genes", file="../GTExV8/gtex8.rds")
+#+END_SRC
+** GRCh38(v26)
+*** Download the annotation
+
+#+BEGIN_SRC sh
+# We start with creating a seperate directory again, so everything is neatly in its own "drawer"
+mkdir -p ../GRCh38
+cd  ../GRCh38
+wget -nc -P ftp://ftp.ebi.ac.uk/pub/databases/gencode/Gencode_human/release_26/gencode.v26.annotation.gtf.gz
+
+# Not sure if we really need to unzip that whole thing, but I decided to do it.
+gunzip gencode.v26.annotation.gtf.gz
+
+#+END_SRC
+*** Prepare an EXON only file
+
+#+BEGIN_SRC R
+# Read the hg38 gtf file we downloaded in the previous step
+hg38  <- read.table("../GRCh38/gencode.v26.annotation.gtf",sep="\t")
+temp1 <- stringr::str_split(hg38[,9],pattern=";")
+
+geneout <- stringr::str_replace(sapply(X = temp1, FUN = stringr::str_subset,
+                                       pattern = "gene_id"),
+                            pattern = "gene_id ", replacement = "")
+
+genetype <- stringr::str_replace(sapply(X = temp1, FUN = stringr::str_subset,
+                                        pattern = "gene_type"),
+                                 pattern = " gene_type ", replacement = "")
+
+genename <- stringr::str_replace(sapply(X = temp1, FUN = stringr::str_subset,
+                                       pattern = "gene_name"),
+                            pattern = "gene_name", replacement = "")
+
+exon2    <- cbind(hg38[, 1:8],  gene_name = genename, gene_biotype = genetype, gene_id = geneout)
+
+colnames(exon2)[1:8] <- c("chromsome_name", "annotation_source", "feature_type", "gene_start",
+                         "gene_end", "score", "strand", "phase")
+
+exon2            <-exon2[,c(1,4,5,7,2,3,9:11)]
+gene_information <- dplyr::filter(exon2, feature_type=="gene")
+
+readr::write_delim(gene_information, "../GRCh38/EXON_ANNOTATION", delim="\t")
+
+#+END_SRC
+** dbSNP
+#+BEGIN_SRC sh
+# Make a dbSNP directory
+mkdir -p ../dbSNP
+cd ../dbSNP
+wget https://ftp.ncbi.nih.gov/snp/organisms/human_9606/VCF/00-All.vcf.gz
+gunzip 00-All.vcf.gz
+#+END_SRC
+
+* Data *preparation*
+There are now several steps required to arrive at our final two data sets (pathogenic variants, benign variants).
+For this, let's first reiterate what we want the final data to look like.
+
+1. Pathogenic variant file
+   This needs to be a file, that contains the chromosome, the start and the end position, gene name, CADD score and allele frequency (already filtered)
+2. Benign variant file
+   This file is the opposite of the pathogenic variant file. Here, we also need the same columns as in pathogenic, but we only save the benign variants.
+3. Combine both with the GTEx expression data 
+
+** GTExV8: Prepare .csv specificity/expression and bedfile
+*** Annotate the GTEx data with GRCh38 annotations
+#+BEGIN_SRC R :results output
+# Load libraries
+library(yarn)
+library(tidyverse)
+
+grch  <- readr::read_delim("../GRCh38/EXON_ANNOTATION", delim="\t")
+gtex8 <- readRDS("../GTExV8/gtex8.rds")
+
+# We extract the relevant annotation information from grch38
+chromosome_name <- data.frame(sapply(grch$chromsome_name, as.character), stringsAsFactors = FALSE)
+gene_start      <- data.frame(grch$gene_start)
+gene_end        <- data.frame(grch$gene_end)
+strand          <- data.frame(grch$strand)
+gene_id         <- data.frame(sapply(grch$gene_id, as.character), stringsAsFactors = FALSE)
+gene_name       <- data.frame(sapply(grch$gene_name,as.character), stringsAsFactors = FALSE)
+gene_biotype    <- data.frame(sapply(grch$gene_biotype, as.character), stringsAsFactors = FALSE)
+
+# Not all the gene ensembl names are overlapping between the hg38 data and the gtex data,
+# so we first check which ones do, and then subset the data accordingly
+
+intersecting_ensembl_names <- intersect(rownames(gtex8@featureData@data), grch$gene_id)
+
+# Combine all the individual columns ( In the future, this very weird legacy code can be changed to much less lines...I just took it from Yiming)
+grch38_annotation <- data.frame(chromosome_name=chromosome_name,
+gene_start=gene_start, gene_end=gene_end, strand=strand, gene_name=gene_name, gene_id=gene_id, gene_biotype=gene_biotype)
+
+colnames(grch38_annotation)[1] <- "chromosome_name"
+colnames(grch38_annotation)[5] <- "gene_name"
+colnames(grch38_annotation)[6] <- "gene_id"
+colnames(grch38_annotation)[7] <- "gene_biotype"
+rownames(grch38_annotation)    <- NULL
+
+# Subset the annotation file by the intersecting ensembl IDs
+grch38_annotation <- grch38_annotation %>%
+filter(gene_id %in% intersecting_ensembl_names)
+
+gtex8@featureData@data <- dplyr::bind_cols(gtex8@featureData@data,grch38_annotation)
+
+
+# remove the duplicates and rename the columns to have the correct names
+gtex8@featureData@data<-gtex8@featureData@data[,-c(1,2,3,4,5,6,7)]
+
+colnames(gtex8@featureData@data)[1] <- "chromosome_name"
+colnames(gtex8@featureData@data)[2] <- "start_position"
+colnames(gtex8@featureData@data)[3] <- "end_position"
+colnames(gtex8@featureData@data)[4] <- "strand"
+colnames(gtex8@featureData@data)[5] <- "gene_name"
+colnames(gtex8@featureData@data)[6] <- "gene_id"
+colnames(gtex8@featureData@data)[7] <- "gene_biotype"
+
+# Save the data object so we do not have to repeat this step
+saveRDS(gtex8, file="../GTExV8/gtexV8_annotated_with_GRCh38.rds")
+
+#+END_SRC
+*** Process 1: Renaming tissues. filtering and normalizing genes
+#+BEGIN_SRC R :session prepare_gtex
+library(yarn)
+library(tidyverse)
+
+gtex8 <- readRDS("../GTExV8/gtexV8_annotated_withGRCh38.rds")
+
+pData(gtex8)$NormGroup <- as.character(pData(gtex8)$SMTS)
+
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Adipose - Subcutaneous"] <- "Adipose - Subcutaneous"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Adipose - Visceral (Omentum)"] <- "Adipose - Visceral (Omentum)"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Cells - EBV-transformed lymphocytes"] <- "Cells - EBV-transformed lymphocytes"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Whole Blood"] <- "Whole Blood"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Artery - Aorta"] <- "Artery - Aorta"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Artery - Coronary"] <- "Artery - Coronary"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Artery - Tibial"] <- "Artery - Tibial"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD %in% c("Brain - Amygdala","Brain - Anterior cingulate cortex (BA24)","Brain - Cortex","Brain - Frontal Cortex (BA9)","Brain - Hippocampus","Brain - Hypothalamus","Brain - Spinal cord (cervical c-1)","Brain - Substantia nigra")] <- "Brain - Other"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD %in% c("Brain - Cerebellar Hemisphere","Brain - Cerebellum")] <- "Brain - Cerebellum"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD %in% c("Brain - Caudate (basal ganglia)","Brain - Nucleus accumbens (basal ganglia)","Brain - Putamen (basal ganglia)")] <- "Brain - Basal ganglia"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Cells - Cultured fibroblasts"] <- "Cells - Cultured fibroblasts"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Colon - Sigmoid"] <- "Colon - Sigmoid"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Colon - Transverse"] <- "Colon - Transverse"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Esophagus - Gastroesophageal Junction"] <- "Esophagus - Gastroesophageal Junction"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Esophagus - Mucosa"] <- "Esophagus - Mucosa"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Esophagus - Muscularis"] <- "Esophagus - Muscularis"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Heart - Atrial Appendage"] <- "Heart - Atrial Appendage"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD == "Heart - Left Ventricle"] <- "Heart - Left Ventricle"
+pData(gtex8)$NormGroup[pData(gtex8)$SMTSD %in% c("Skin - Not Sun Exposed (Suprapubic)","Skin - Sun Exposed (Lower leg)")] <- "Skin"
+
+# Filter genes with not enough samples
+gtex8.filtered <- filterLowGenes(gtex8, groups="NormGroup", minSamples=9)
+
+# Tissue aware normalization based on yarn package
+gtex8.filtered <- normalizeTissueAware(gtex8.filtered, groups="NormGroup")
+
+saveRDS(gtex8.filtered, "../GTExV8/gtex8_normalises_and_filtered.rds")
+#+END_SRC
+*** Process 2: Calculate mean expression and create specificity
+*Tissue Specificity*
+The definition of non-parametric specificity percentile scores can be found here: _Hu, X. et al. Integrating autoimmune risk loci with gene-expression data
+identifies specific pathogenic immune cell subsets. Am. J. Hum. Genet. 89,496–506 (2011)._
+#+BEGIN_SRC R
+
+# Load Libraries
+library(yarn)
+library(tidyverse)
+
+# Load data
+gtex8.filtered <- readRDS("../GTExV8/gtex8_normalises_and_filtered.rds")
+
+# Calculate the mean
+gtex8.mean <- by(data=t(assayData(gtex8.filtered)[["normalizedMatrix"]]),
+                INDICES=pData(gtex8.filtered)$NormGroup,
+                FUN=function(x) apply(x, 2, mean))
+
+gtex8.mean <- do.call(cbind, gtex8.mean)
+gtex8.mean <- cbind(gtex8.mean, gtex8.filtered@featureData@data)
+
+# Rename the tissues so they work with R etc as variable names
+
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Adipose - Subcutaneous"] <-"Adipose_Subcutaneous"
+colnames(gtex8.mean)[colnames(gtex8.mean) =="Adipose - Visceral (Omentum)" ] <-"Adipose_Visceral_Omentum"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Cells - EBV-transformed lymphocytes"] <-"Cells_EBV_transformed_lymphocytes"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Whole Blood"] <-"Whole_Blood"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Artery - Aorta"] <-"Artery_Aorta"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Artery - Coronary"] <-"Artery_Coronary"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Artery - Tibial"] <- "Artery_Tibial"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Brain - Other"] <- "Brain_Other"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Brain - Cerebellum"] <- "Brain_Cerebellum"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Brain - Basal ganglia"] <-  "Brain_Basal_ganglia"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Colon - Sigmoid"] <- "Colon_Sigmoid"
+colnames(gtex8.mean)[colnames(gtex8.mean) ==  "Colon - Transverse"] <-  "Colon_Transverse"
+colnames(gtex8.mean)[colnames(gtex8.mean) =="Esophagus - Gastroesophageal Junction" ] <-  "Esophagus_Gastroesophageal_Junction"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Esophagus - Mucosa" ] <- "Esophagus_Mucosa"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Esophagus - Muscularis"] <-  "Esophagus_Muscularis"
+colnames(gtex8.mean)[colnames(gtex8.mean) =="Heart - Atrial Appendage" ] <- "Heart_Atrial_Appendage"
+colnames(gtex8.mean)[colnames(gtex8.mean) =="Heart - Left Ventricle" ] <- "Heart_Left_Ventricle"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Cells - Cultured fibroblasts"] <- "Cells_Cultured_fibroblasts"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Adrenal Gland"] <- "Adrenal_Gland"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Cervix Uteri"] <- "Cervix_Uteri"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Fallopian Tube"] <- "Fallopian_Tube"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Salivary Gland"] <- "Salivary_Gland"
+colnames(gtex8.mean)[colnames(gtex8.mean) == "Small Intestine"] <- "Small_Intestine"
+
+
+#Calculate nonparametric-expression specificity score
+gtex8_spec <- data.frame(t(apply(gtex8.mean[gtex8.mean$gene_biotype == "protein_coding", !colnames(gtex8.mean) %in% c("gene_id","gene_name","chromosome_name","start_position","end_position", "strand", "gene_biotype")], 1,
+function(row) row/sqrt(sum(row^2)))), gtex8.mean[gtex8.mean$gene_biotype == "protein_coding", colnames(gtex8.mean) %in% c("gene_id","gene_name","chromosome_name","start_position","end_position", "strand", "gene_biotype")], check.names=FALSE)
+gtex8_specificity_percentile <- data.frame(apply(gtex8_spec[ , !colnames(gtex8_spec) %in% c("gene_id","gene_name","chromosome_name","start_position","end_position","strand","gene_biotype")], 2,
+function(col) rank(-col)/length(col)), gtex8_spec[ , colnames(gtex8_spec) %in% c("gene_id","gene_name","chromosome_name","start_position","end_position","strand","gene_biotype")], check.names=FALSE)
+
+# Write the expression and the specificity tables
+write.csv(gtex8.mean, file = "../GTExV8/GTExV8_expression.csv", row.names = FALSE, quote=FALSE)
+write.csv(gtex8_specificity_percentile, file = "../GTExV8/GTExV8_specificity.csv", row.names = FALSE, quote=FALSE)
+
+#+END_SRC
+*** Create bedfile
+#+BEGIN_SRC R 
+library(readr)
+dat <- read_csv("GTExV8_specificity.csv")
+
+write_delim(dat[, c("chromosome_name", "start_position", "end_position", "gene_id", "gene_name")], "../GTExV8/GTExV8.bed", delim="\t")
+#+END_SRC
+
+Remove the header line:
+#+BEGIN_SRC sh
+cat ../GTExV8/GTExV8.bed | sed '1d' > ../GTExV8/GTEx_final.bed
+#+END_SRC
+** ClinVar: create bedfile
+We need to extract the relevant columns from the Clinvar vcf file.
+
+#+BEGIN_SRC sh
+cat ../ClinVar/ClinVar_patho | sed '1d' | awk {'print $1="chr"$1, $2, $2'} | tr ' ' '\t' > ClinVar.bed
+#+END_SRC
+** Summarize the Clinvar data to have all CLNSIG values in one column
+As Denise commented that she only selected unambiguous variants, where all infor said Pathogenic
+
+#+BEGIN_SRC sh
+bcftools query -f '%CHROM\t%POS\t%INFO/CLNSIG\n' clinvar.vcf | awk {'print $1="chr"$1, $2-1, $2, $3'} | tr ' ' '\t' | bedtools merge -i - -c 4 -o collapse > TEST.csv
+#+END_SRC
+
+** Extract the unambiguous pathogenic variants
+#+BEGIN_SRC R
+library(tidyverse)
+
+# Read the clinvar data that I prepared in the step above
+clinvar = read_delim("TEST.csv", delim='\t', col_names=FALSE)
+
+# Subset to the onces that contain Pathogenic only
+pathogenic = clinvar[grep("Pathogenic", clinvar$X4),]
+
+indicator = c()
+for (i in 1:dim(pathogenic)[1]){
+   indicator = c(indicator,  all(unlist(str_split(as.vector(unlist(pathogenic[i,4])), ","))==unlist(str_split(as.vector(unlist(pathogenic[i,4])), ","))[1]))
+
+}
+pathogenic$indicator = indicator
+
+# We included the pathogenic ones now, but there are still some in there that say Likely_pathogenic, as this is one descripting "Pathogenic\Likely_pathogenic", hence the previous step 
+# did not get rid of this.
+patho <- pathogenic %>% filter(indicator %in% TRUE)
+patho <- patho[-grep("Likely" , patho$X4),]
+patho <- patho[,1:3]
+
+write_delim(patho, "clinvar_patho.bed", delim='\t', col_names=FALSE)
+
+
+#+END_SRC
+
+** CADD: create bedfile
+
+The CADD data columns are:
+| #Chrom | Pos | Ref | Alt | RawScore | PHREDf |
+
+#+BEGIN_SRC sh
+cd ../CADD
+# Here we include the 5th column, as this is the CADD score.
+# The $2-1 is necessary as for bedtools we need distinct positions. Even if it is just a single base, we need the start and end. and that would 
+# be start = start -1
+zcat whole_genome_SNVs.tsv.gz  | sed '1,2d' | awk {'print $1="chr"$1, $2-1 ,$2, $5, $6'} | tr ' ' '\t' | gzip > CADD_both_scores.bed.gz
+#+END_SRC
+** dbSNP: create bedfile
+~bcftools~ to extract the information we need for the bedfile
+#+BEGIN_SRC sh
+# Extract Chromosome, position, Ref and Alt
+../bcftools/bcftools query -f '%CHROM %POS %REF %ALT\n' ../dbSNP/00-All.vcf > ../dbSNP/dbSNP.bed
+
+# Create the bedfile with the necessary fromat.
+cat ../dbSNP/dbSNP.bed | awk {'print $1="chr"$1, $2-1, $2'} | tr ' ' '\t' > dbSNP_final.bed
+
+# remove redundant file
+rm ../dbSNP/dbSNP.bed
+
+# Sort the bedfile for intersect
+bedtools sort -i ../dbSNP/dbSNP.bed > ../dbSNP/dbSNP_sorted.bed
+
+#+END_SRC
+* Create *pathogenic variant file*
+  
+** Get the ClinVar subset that is in GTEx.
+#+BEGIN_SRC sh
+/home/ubuntu/bedtools instersect -wa -wb -a ../GTExV8/GTEx_final.bed  -b ../ClinVar/clinvar_patho.bed > ../GTExV8/GTEx_ClinVar
+
+cat ../GTExV8/GTEx_ClinVar | awk {'print $6, $7, $8'} | tr ' ' '\t' > ../ClinVar/ClinVar_subset.bed
+
+/home/ubuntu/bedtools sort -i ../ClinVar/ClinVar_subset.bed > ../ClinVar/ClinVar_subset_sorted.bed
+rm ../ClinVar/ClinVar_subset.bed
+
+# Now, we make sure that we only keep unique locations, as there might be overlapping exons
+cat ../ClinVar/ClinVar_subset_sorted.bed | bedtools merge -i - > ../ClinVar/ClinVar_unique_GTEx
+
+cat ClinVar_unique_GTEx | awk {'print $1, $2-1, $2'} | tr ' ' '\t' > CLINI
+
+mv CLINI ClinVar_unique_GTEx
+
+#+END_SRC
+
+** Intersect CADD and ClinVar/GTEx subset
+We need the CADD score for the ClinVar pathogenic variants, hence we used bedtools intersect above to get the overlap
+between ClinVar (only the ones labelled as pathogenic) and GTEx. Then we used interesect again to get
+the overlap between the ClinVar_GTEx-bedfile and CADD.
+
+#+BEGIN_SRC sh
+cd ../ClinVar
+/home/ubuntu/bedtools intersect -wa -wb -a ClinVar_unique_GTEx -b ../CADD/CADD_both_scores.bed.gz  -sorted | awk {'print $1,$2,$3,$7,$8'} | tr ' ' '\t' >  ClinVar_CADD_subset.bed
+
+#This returns the unique locations and the maximum CADD value per group.
+cd ../GTExV8
+/home/ubuntu/bedtools merge -i ClinVar_CADD_subset.bed -c 4,5 -o max,max > FINAL_GTEX_CADD.bed
+#+END_SRC
+
+** gnomAD
+As the gnomAD file is one of the two largest files in the collection of files we utilise, we can not really modify it efficiently. That goes especially for sorting or turning it into a bedfile.
+Thankfully, bedtools works with vcf/bcf files and we can sort our pathogenic variant file that we have created in the steps above,
+which is a very small file.
+
+*** Generate pathogenic_file folder and pathogenic.bed file
+The ~pathogenic_file~ directory will contain the final pathogenic file.
+Hence, we create the directory and add the bedfile with the CADD scores, genomic locations, gene information and ClinVar pathogenic
+variants to it.
+
+#+BEGIN_SRC sh
+mkdir -p ../pathogenic_file
+
+cp ../GTExV8/FINAL_GTEX_CADD.bed ../pathogenic_file/pathogenic.bed
+#+END_SRC
+
+*** version sort pathogenic.bed
+The gnomAD file seems to be sorted chr1, chr2, chr3 etc, while the pathogenic.bed file is sorted chr1, chr10, chr11.
+So we sort the pathogenic.bed file also to chr1, chr2, chr3 etc.
+
+#+BEGIN_SRC sh
+cd ../pathogenic_file
+
+# The V makes sure we sort chr1, chr2, chr3 and not chr1, chr10, chr11
+sort -V -k1,1 -k2,2 pathogenic.bed > pathogenic_version_sorted.bed
+
+# Then we use bedtools intersect. -wao settings to return also those variants that are in clinvar, but not in gnomAD, as they are very very rare probably
+bedtools intersect -wao  -a pathogenic_version_sorted.bed -b ../gnomAD/gnomad_SNV.vcf.bgz -sorted > patho_gnomAD
+#+END_SRC
+
+*** Create the pathogenic file
+*IMPORTANT*
+The sort command requires the ~-g~ setting, as this includes scientific numbers as well. The reason we did not simply use the same bcftools filter command we used further down in the benign variants is, that the condition would be ~AF_X > 0.01 & AF_Y >0.01~ etc. Including all possible ~AF_~ in the gnomAD file. However, not all rows contain the same AF's and that means the condition of all AF_'s in the gnomAD file are not true, even though all given AF_'s for this row are indeed >0.01. The below code is inefficiently slow on larger scales, but for the relatively small number of pathogenic variants (~8,0000), this works still very fast ( ~1-2 minutes).
+#+BEGIN_SRC bash
+# Enter the pathogenic file directory
+cd ../pathogenic_file
+
+# Create the gnomAD annotated pathogenic bedfile
+cat patho_gnomAD | awk {'print $1, $2, $3, $4, $5, $13'} | tr ' ' '\t' > pathogenic_gnomAD.bed
+touch AF_values_gnomAD.txt
+
+# specify the gnomAD annotated pathogenic file we created above
+filename='pathogenic_gnomAD.bed'
+
+# Read the gnomAD annotated file line by line and extract the maximum allele frequency for every entry
+# NOTE: we need to exclude AF_raw, as thsi is not a population specific value. Hence, 'grep -v'.
+while read line; do
+    if  echo "$line" | egrep -q 'AF_[^;]+'
+    then  echo $line | egrep -o 'AF_[a-zA-Z]*[(:?_a-zA-Z)]*[=][-+]?[0-9]*\.?[0-9]*[^;]+' | grep -v 'AF_raw' | cut -d "=" -f2 | sort -g -r | head -n 1 >>  AF_values_gnomAD.txt
+    else echo "NA" >>  AF_values_gnomAD.txt
+    fi
+    done < "$filename"
+#+END_SRC
+
+As we have NAs and numbers in the AF column, we need to write a script to get those lines that have an NA or a value <=0.01
+
+#+BEGIN_SRC sh
+# Enter the pathogenic directory again
+cd ../pathogenic_file
+
+# remove the last column from the gnomAD annotated bedfile, as it contains the whole string of 
+# allele frequencies which we do not need, as we have the maximum allele frequency extracted now.
+#cat pathogenic_gnomAD.bed | awk {'print $1, $2, $3, $4, $5, $6'} > patho_2
+cat patho_gnomAD | awk {'print $1, $2, $3, $4, $5'} > patho_2 
+
+# Add the maximum allele frwquency as a column to the pathogenic variant file
+paste -d'\t' patho_2 AF_values_gnomAD.txt  | tr ' ' '\t' > PATHOGENIC
+# This awk command replaces values; in replacing the NA with 0, I make sure the allele frequency of those very rare variants will stay in 
+# The gsub command is taken from this website : https://www.cyberciti.biz/faq/awk-find-and-replace-fields-values/
+cat PATHOGENIC | awk {'gsub("NA","0",$6); print'} | tr ' ' '\t' | /home/ubuntu/bedtools merge -i - -c 4,5,6 -o max,max,max | awk {'if($6 <=0.01) {print}'} > PATHOGENIC_merged
+rm PATHOGENIC
+mv PATHOGENIC_merged PATHOGENIC
+
+# Add a header row
+sed -e'1i\CHROM\tSTART\tEND\tCADD_RAW_SCORE\tCADD_SCALED\tGNOMAD_AF' PATHOGENIC > PATHO_FINAL
+
+# Remove redundant files
+rm patho_2
+#rm AF_values_gnomAD.txt
+rm PATHOGENIC
+mv PATHO_FINAL PATHOGENIC
+
+cat PATHOGENIC | sed '1d' | cut -f1,2,3,4,5 | tr ' ' '\t' > PATHOGENIC.bed
+
+
+echo 'Pathogenic variant file created!!!'
+#+END_SRC
+* Create *benign variant files*
+The creation of the benign variant file requires the following steps:
+
+1. ~bedtools intersect~ with the ~-v~ setting: This returns all entries in the bedfile A, that are not in bedfile B.
+   That means, we use our GTEx locations as A and the ClinVar locations as B. We will then get all the locations/genes
+   from GTEx, that are not in ClinVar. CAVEAT: We have subsetted ClinVar to the pathogenic variants in the creation of the pathogenic variant file.
+   Here, we obviously need the full ClinVar data set, as we will stay consistent with the ~VARPP~ paper, where all variants that were mentioned in ClinVar
+   are excluded.
+2. We do not annotate the benign genes with all possible 9 billion CADD single base locations. We downloaded ~dbSNP~ for this purpose. This database includes
+   known and reported variants. So we first intersect our benign genes with this data base
+2. ~bedtools intersect~ with CADD, as we need the CADD scores for all those *benign* variants.
+3. For completion sake, we need to intersect the resulting file with gnomAD, to get the allele frequencies and make sure they are all above 0.01.
+
+** Get the GTEx locations that are not in ClinVar
+
+The ~-v~ setting in bedtools makes sure we receive only the non-overlapping regions from the ~-a~ file in return.
+#+BEGIN_SRC sh
+mkdir -p ../benign_file
+/home/ubuntu/bedtools intersect -v -a ../GTExV8/GTEx_final.bed  -b ../ClinVar/ClinVar.bed -sorted > ../benign_file/GTEx_benign.bed
+#+END_SRC
+
+** Intersect the locations with dbSNP
+
+We intersect the GTEx benign variants with dbSNP first, to get the locations of known variants.
+We subsetted the dbSNP data to only contain the SNVs
+#+BEGIN_SRC sh
+
+cat ../dbSNP/00-All.vcf | grep 'SNV' > dbSNP_SNV_only
+cat dbSNP_SNV_only | awk {'print $1="chr"$1, $2-1, $2'} | tr ' ' '\t' > dbSNP_SNV.bed
+
+/home/ubuntu/bedtools intersect -wa -wb -a ../benign_file/GTEx_benign.bed -b ../dbSNP/dbSNP_SNV.bed -sorted > ../benign_file/GTEx_dbSNP_benign.bed
+
+# Get the locations from dbSNP
+# the -k1,1 etc seems to work now...not sure what was the issue before. Maybe k1,1n?
+cat ../benign_file/GTEx_dbSNP_benign.bed | awk {'print $6, $7, $8, $4, $5'} | tr ' ' '\t' | sort -k1,1 -k2,2n -k3,3n | /home/ubuntu/bedtools merge -i - -c 4,5 -o distinct,distinct > benign_variants.bed
+
+# Remove redundant files
+rm GTEx_dbSNP_benign.bed
+
+#+END_SRC
+
+NOTE: this will throw the following error
+
+#+BEGIN_SRC 
+ERROR: Database file ../dbSNP/dbSNP_final.bed contains chromosome chrMT, but the query file does not.
+       Please rerun with the -g option for a genome file.
+       See documentation for details.
+#+END_SRC
+
+The file we need will still be created, this just indicates that the GTEx benign variant file we used as our ~-a~ in bedtools does not contain
+*MT* genes (mitochondrial).
+
+** Intersect GTEx and dbSNP benign variants with CADD
+Now, we get the CADD scores for all the locations we extracted in the previous step.
+
+#+BEGIN_SRC sh
+cd ../benign_file
+sort -k1,1 -k2,2n -k3,3n  benign_variants.bed > benign_variants_sorted.bed
+rm benign_variants.bed
+
+/home/ubuntu/bedtools intersect -wa -wb -a benign_variants_sorted.bed -b ../CADD/CADD_final_correct_position.bed -sorted > benign_variants_CADD.bed
+
+# Extract the information we need; position $9 is the CADD score
+# This needs a merge again
+cat benign_variants_CADD.bed | awk {'print $1, $2, $3, $4, $5, $9'} | tr ' ' '\t' | /home/ubuntu/bedtools merge -i - -c 4,5,6 -o distinct,distinct,max > benign_with_CADD.bed
+
+# Remove redundant files
+rm benign_variants_CADD.bed
+#+END_SRC
+
+** Intersect benign + CADD with gnomAD and extract max allele frequency across all populations
+We need the allele frequency for all the benign variants, as our final check: we only retain variants that have an allele frequency
+larger than 0.01 in at least one population in gnomAD.
+
+/A note about this:/ There is a field in the gnomAD data, that indicates ~variant_type~ as ~snv~. 
+~bcftools~ can be used to filter out only the snvs:
+
+#+BEGIN_SRC 
+bcftools view -v snps  -O z -o gnomad_snv_only.vcf.bgz gnomad.genomes.r3.0.sites.vcf.bgz
+#+END_SRC
+
+~-v~: types; in our case snps; this includes snps only
+~-l~: compression, with 1 being speed optimised (apparently)
+~-O~: output type: b is bcf compressed
+~-o~: output file name
+
+
+The below is the bottleneck: Extracting the max allele frequency with the sort and grep is very, very inefficient and takes days.
+The intersect with CADD and gnomAD is done overnight.
+The ~intersect~ step leads to /178,577,003/ rows/variants. These contain duplicates, as ~bedtools merge~ was not applied yet. We need to keep this, as we add the allele frequencies to it and then sort out the ones with an AF <0.01.
+** The final intersect with gnomAD
+Here we get the gnomAD and CADD final benign variant file.
+We pipe the bcftools filter of any allele frequency larger than 0.01 into the bedtools intersect function to get the final gnomAD file with the CADD annotation.
+
+*** First we get all the different AF names to filter by
+
+#+BEGIN_SRC sh :results output
+cd ../gnomAD
+
+gunzip -c gnomad.genomes.r3.0.sites.vcf.bgz | head -n 300 | egrep -o "AF_[a-zA-Z]*[(:?_a-zA-Z)]*" | tr '\n' '\t'
+
+#+END_SRC
+
+#+RESULTS:
+: AF_asj_female	AF_eas_female	AF_afr_male	AF_female	AF_fin_male	AF_oth_female	AF_ami	AF_oth	AF_male	AF_ami_female	AF_afr	AF_eas_male	AF_sas	AF_nfe_female	AF_asj_male	AF_raw	AF_oth_male	AF_nfe_male	AF_asj	AF_amr_male	AF_amr_female	AF_sas_female	AF_fin	AF_afr_female	AF_sas_male	AF_amr	AF_nfe	AF_eas	AF_ami_male	AF_fin_female	
+
+*** Second we filter and put the benign variant file together
+
+#+BEGIN_SRC sh
+bcftools filter -i 'INFO/AF_eas_female > 0.01 | INFO/AF_afr_male > 0.01 | INFO/AF_female > 0.01 | INFO/AF_fin_male > 0.01 | INFO/AF_oth_female > 0.01 | INFO/AF_ami > 0.01 | INFO/AF_oth > 0.01 | INFO/AF_male > 0.01 | INFO/AF_ami_female >0.01 | INFO/AF_afr > 0.01 |  INFO/AF_eas_male > 0.01 | INFO/AF_sas > 0.01 |  INFO/AF_nfe_female >0.01 |  INFO/AF_asj_male > 0.01 | INFO/AF_oth_male > 0.01 | INFO/AF_nfe_male > 0.01 |  INFO/AF_asj > 0.01 |  INFO/AF_amr_male > 0.01 |  INFO/AF_amr_female >0.01 |  INFO/AF_sas_female > 0.01 |  INFO/AF_fin > 0.01 |  INFO/AF_afr_female > 0.01 | INFO/AF_sas_male > 0.01 |  INFO/AF_amr > 0.01 |  INFO/AF_nfe > 0.01 | INFO/AF_eas >0.01 | INFO/AF_ami_male > 0.01 | INFO/AF_fin_female' gnomad_SNV.vcf.bgz | bedtools intersect -wa -a ../benign_file/benign_with_CADD_sorted.bed -b - -sorted | cut -f1,2,3,4,5,6 > TEST_BENIGN_TEST
+#+END_SRC
+
+*** Check if the results are correct
+
+/Important:/ 
+the sort command needs the ~-g~ setting, as this will take scientific numbers into account. Otherwise the exponent numbers are always on top of teh sorted list and they can be much smaller than 0.01 of course.
+#+BEGIN_SRC sh
+bcftools filter -i 'INFO/AF_eas_female > 0.01 | INFO/AF_afr_male > 0.01 | INFO/AF_female > 0.01 | INFO/AF_fin_male > 0.01 | INFO/AF_oth_female > 0.01 | INFO/AF_ami > 0.01 | INFO/AF_oth > 0.01 | INFO/AF_male > 0.01 | INFO/AF_ami_female >0.01 | INFO/AF_afr > 0.01 |  INFO/AF_eas_male > 0.01 | INFO/AF_sas > 0.01 |  INFO/AF_nfe_female >0.01 |  INFO/AF_asj_male > 0.01 | INFO/AF_oth_male > 0.01 | INFO/AF_nfe_male > 0.01 |  INFO/AF_asj > 0.01 |  INFO/AF_amr_male > 0.01 |  INFO/AF_amr_female >0.01 |  INFO/AF_sas_female > 0.01 |  INFO/AF_fin > 0.01 |  INFO/AF_afr_female > 0.01 | INFO/AF_sas_male > 0.01 |  INFO/AF_amr > 0.01 |  INFO/AF_nfe > 0.01 | INFO/AF_eas >0.01 | INFO/AF_ami_male > 0.01 | INFO/AF_fin_female' gnomad_SNV.vcf.bgz | head -n 100000 | while read p; do echo $p | egrep -o 'AF_[a-zA-Z]*[(:?_a-zA-Z)]*[=][-+]?[0-9]*\.?[0-9]*[^;]+' |  grep -v 'AF_raw' | cut -d "=" -f2 | sort -g | tail -n 1 >> check_min_af_to_be_above_001; done
+
+#+END_SRC
+
+*** Bedtools merge for the final benign variant file
+As there are duplications in the coordinates, due to several different snps at that point, we need to use bedtools merge again and select the maximum CADD score over the duplicate rows.
+
+#+BEGIN_SRC sh
+bedtools merge -i TEST_BENIGN_TEST -c 4,5,6 -o distinct,distinct,max > ../benign_file/final_benign_variants.bed
+#+END_SRC
+
+** Reduce the number of benign variants
+We have more than 6 million benign variants, which is quite excessive. There is a nice [[https://gist.github.com/mrdwab/6424112][R function]] that allows to downsample the data by being group sensitive.
+Further, some variants have no clear annotation, which means there are two or more genes listed. We will first filter those out.
+#+BEGIN_SRC R :session downsample_benign
+stratified <- function(df, group, size, select = NULL, 
+                       replace = FALSE, bothSets = FALSE) {
+  if (is.null(select)) {
+    df <- df
+  } else {
+    if (is.null(names(select))) stop("'select' must be a named list")
+    if (!all(names(select) %in% names(df)))
+      stop("Please verify your 'select' argument")
+    temp <- sapply(names(select),
+                   function(x) df[[x]] %in% select[[x]])
+    df <- df[rowSums(temp) == length(select), ]
+  }
+  df.interaction <- interaction(df[group], drop = TRUE)
+  df.table <- table(df.interaction)
+  df.split <- split(df, df.interaction)
+  if (length(size) > 1) {
+    if (length(size) != length(df.split))
+      stop("Number of groups is ", length(df.split),
+           " but number of sizes supplied is ", length(size))
+    if (is.null(names(size))) {
+      n <- setNames(size, names(df.split))
+      message(sQuote("size"), " vector entered as:\n\nsize = structure(c(",
+              paste(n, collapse = ", "), "),\n.Names = c(",
+              paste(shQuote(names(n)), collapse = ", "), ")) \n\n")
+    } else {
+      ifelse(all(names(size) %in% names(df.split)),
+             n <- size[names(df.split)],
+             stop("Named vector supplied with names ",
+                  paste(names(size), collapse = ", "),
+                  "\n but the names for the group levels are ",
+                  paste(names(df.split), collapse = ", ")))
+    }
+  } else if (size < 1) {
+    n <- round(df.table * size, digits = 0)
+  } else if (size >= 1) {
+    if (all(df.table >= size) || isTRUE(replace)) {
+      n <- setNames(rep(size, length.out = length(df.split)),
+                    names(df.split))
+    } else {
+      message(
+        "Some groups\n---",
+        paste(names(df.table[df.table < size]), collapse = ", "),
+        "---\ncontain fewer observations",
+        " than desired number of samples.\n",
+        "All observations have been returned from those groups.")
+      n <- c(sapply(df.table[df.table >= size], function(x) x = size),
+             df.table[df.table < size])
+    }
+  }
+  temp <- lapply(
+    names(df.split),
+    function(x) df.split[[x]][sample(df.table[x],
+                                     n[x], replace = replace), ])
+  set1 <- do.call("rbind", temp)
+  
+  if (isTRUE(bothSets)) {
+    set2 <- df[!rownames(df) %in% rownames(set1), ]
+    list(SET1 = set1, SET2 = set2)
+  } else {
+    set1
+  }
+}
+#+END_SRC
+
+#+BEGIN_SRC R :session downsample_benign
+library(tidyverse)
+# Filter out the variants that have multiple annotations
+dat <- read_delim("final_benign_variants.bed", delim="\t", col_names=F)
+dat <- dat[-grep(",", dat$X5),]
+
+# Downsample the benign variants to ~60,000 variants, which is approximately what we had in the old VARPP
+# X1 is the chromosome column, X5 is the gene name column
+dat_down <- stratified(dat, c("X1", "X5"), size=0.01)
+
+# Save the data
+write_delim(dat_down, "BENIGN.bed", col_names=F, delim="\t")
+#+END_SRC
+
+Sort the bedfile
+#+BEGIN_SRC sh
+cd ../benign_file
+/home/ubuntu/bedtools sort -i BENIGN.bed > BENIGN_SORTED.bed
+rm BENIGN.bed
+#+END_SRC
+
+* Final GTEx benign and pathogenic files
+  
+** Prepare GTEx benign
+*** Get the CADD PHRED score
+
+First, get the CADD Phred score as well, which is the scaled CADD score. 
+#+BEGIN_SRC sh
+bedtools intersect -wa -wb -a ../benign_file/BENIGN_SORTED.bed -b CADD_both_scores.bed.gz -sorted | awk {'print $1,$2,$3,$4,$5,$6,$11'} | tr ' ' '\t' > BENIGN_SORTED_PHRED.bed
+
+/home/ubuntu/bedtools merge -i BENIGN_SORTED_PHRED.bed -c 4,5,6,7 -o distinct,distinct,max,max > BENIGN_SORTED_new_with_PHRED.bed
+
+
+#+END_SRC
+
+
+#+BEGIN_SRC sh 
+cd ../benign_file
+/home/ubuntu/bedtools intersect -wa -wb  -a ../GTExV8/gtex.bed -b  BENIGN_SORTED_new_with_PHRED.bed | cut -f1-47,53,54 | bedtools sort -i - > BENIGN_GTEX_new.bed
+#rm  BENIGN_SORTED_new_with_PHRED.bed
+#rm VARPP_$HPO
+#+END_SRC
+
+
+Make a directory for the final VARPP data
+#+BEGIN_SRC sh
+cd ../
+mkdir VARPP_DATA
+#+END_SRC
+
+
+Now, in R, we add the column names and put the file into the right order for VARPP
+
+#+BEGIN_SRC R
+library(tidyverse)
+benign <- read_delim("../benign_file/BENIGN_GTEX_new.bed", delim="\t", col_names=F)
+
+# In order to add the names of the variables again, we load the orignial data set and do some magic
+gtex_names <- read_csv("../GTExV8/GTExV8_specificity.csv")
+gtex_names <- names(gtex_names)
+
+# Rearrange the columns and only keep what we need
+benign_final <- benign[,c(1:6,48,49,7:47)]
+
+
+# Names to our data set
+names(benign_final) <- c("chromosome_name", "start_position" , "end_position", "gene_name", "gene_id", "gene_biotype", "CADD_raw_rankscore","CADD_PHRED_SCORE", gtex_names[1:41])
+
+benign_final$variant <- as.numeric(ave(benign_final$gene_name, benign_final$gene_name, FUN=seq_along))
+
+benign_final$GeneVariant <- paste(benign_final$gene_name, benign_final$variant, sep="_")
+
+# Create the indicator variable for "pathogenic"
+benign_final <- benign_final %>%
+rename(Gene = gene_name) %>%
+select(-variant) %>%
+mutate(Pathogenic = 0)
+
+# Just to get the data into a nice order, we want to keep the bedfile structure,
+# but also have an order that is convenient: Chr, Start, End, Gene, Gene_Variant, gene_id,
+
+tissues  <- names(benign_final)[9:49]
+bed_info <- names(benign_final)[1:3]
+gene_info <- c("Gene", "GeneVariant", "CADD_raw_rankscore","CADD_PHRED_SCORE", "Pathogenic", "gene_id", "gene_biotype")
+
+benign_final <- benign_final[,c(gene_info, tissues)]
+
+# Save the final benign variant file for VARPP
+write_csv(benign_final, "../VARPP_DATA/benign_variant_file_NEW.csv")
+#+END_SRC
+
+** Prepare GTEx pathogenic
+#+BEGIN_SRC sh 
+cd ../pathogenic_file
+# 51 and 52 are the raw and the scaled CADD scores respectively
+/home/ubuntu/bedtools intersect -wa -wb  -a ../GTExV8/gtex.bed -b  PATHOGENIC.bed | cut -f1-47,51,52 | /home/ubuntu/bedtools sort -i - > PATHOGENIC_GTEX_new.bed
+#rm VARPP_$HPO
+#+END_SRC
+
+Now, in R, we add the column names and put the file into the right order for VARPP
+
+#+BEGIN_SRC R
+library(tidyverse)
+patho <- read_delim("../pathogenic_file/PATHOGENIC_GTEX_new.bed", delim="\t", col_names=F)
+
+# In order to add the names of the variables again, we load the orignial data set and do some magic
+gtex_names <- read_csv("../GTExV8/GTExV8_specificity.csv")
+gtex_names <- names(gtex_names)
+
+# Rearrange the columns and only keep what we need
+patho_final <- patho[,c(1:6,48,49,7:47)]
+
+
+# Names to our data set
+names(patho_final) <- c("chromosome_name", "start_position" , "end_position", "gene_name", "gene_id", "gene_biotype", "CADD_raw_rankscore", "CADD_PHRED_SCORE", gtex_names[1:41])
+patho_final$variant <- as.numeric(ave(patho_final$gene_name, patho_final$gene_name, FUN=seq_along))
+
+patho_final$GeneVariant <- paste(patho_final$gene_name, patho_final$variant, sep="_")
+
+# Create the indicator variable for "pathogenic"
+patho_final <- patho_final %>%
+rename(Gene = gene_name) %>%
+select(-variant) %>%
+mutate(Pathogenic = 1)
+
+# Just to get the data into a nice order, we want to keep the bedfile structure,
+# but also have an order that is convenient: Chr, Start, End, Gene, Gene_Variant, gene_id,
+
+tissues  <- names(patho_final)[9:49]
+bed_info <- names(patho_final)[1:3]
+gene_info <- c("Gene", "GeneVariant", "CADD_raw_rankscore","CADD_PHRED_SCORE", "Pathogenic", "gene_id", "gene_biotype")
+
+patho_final <- patho_final[,c(gene_info, tissues)]
+
+# Save the final patho variant file for VARPP
+write_csv(patho_final, "../VARPP_DATA/pathogenic_variant_file_unambiguous.csv")
+#+END_SRC
+
+* CADD PHRED score
+So far we have been retaining the CADD raw score, which might not be ideal. So in this step, we will also get the PHRED score.
+For this, we can simply use the file we created above: ~PATHOGENIC.bed~, which has the coordinates for the pathogenic variants we extracted.
+
+#+BEGIN_SRC sh
+cd ../CADD
+# Create a CADD bed file: remove the header from the file and add the end coordinate; keep both CADD scores
+zcat whole_genome_SNVs.tsv.gz  | sed '1,2d' | awk {'print $1, $2-1 ,$2, $5, $6'} | tr ' ' '\t' | gzip > CADD_both_scores.bed.gz
+
+# Intersect with the pathogenic variant bed file
+/home/ubuntu/bedtools intersect -wa -wb -a ../pathogenic_file/PATHOGENIC.bed  -b CADD_both_scores.bed.gz > PATHOGENIC_CADD_NEW.bed
+
+#+END_SRC
+
+* Unambiguous pathogenicity based on CLinVar
+
+** Summarize the Clinvar data to have all CLNSIG values in one column
+The above data set contains level 4 and 5 pathogenic variants (likely pathogenic and pathogenic).
+To have an unambiguous data set, we can select the level 5 (pathogenic) variants only.
+
+#+BEGIN_SRC sh
+bcftools query -f '%CHROM\t%POS\t%INFO/CLNSIG\n' clinvar.vcf | awk {'print $1="chr"$1, $2-1, $2, $3'} | tr ' ' '\t' | bedtools merge -i - -c 4 -o collapse > TEST.csv
+#+END_SRC
+
+
+** Extract the unambiguous pathogenic variants
+#+BEGIN_SRC R
+library(tidyverse)
+
+# Read the clinvar data that I prepared in the step above
+clinvar = read_delim("TEST.csv", delim='\t', col_names=FALSE)
+
+# Subset to the onces that contain Pathogenic only
+pathogenic = clinvar[grep("Pathogenic", clinvar$X4),]
+
+indicator = c()
+for (i in 1:dim(pathogenic)[1]){
+   indicator = c(indicator,  all(unlist(str_split(as.vector(unlist(pathogenic[i,4])), ","))==unlist(str_split(as.vector(unlist(pathogenic[i,4])), ","))[1]))
+
+}
+pathogenic$indicator = indicator
+
+# We included the pathogenic ones now, but there are still some in there that say Likely_pathogenic, as this is one descripting "Pathogenic\Likely_pathogenic", hence the previous step 
+# did not get rid of this.
+patho <- pathogenic %>% filter(indicator %in% TRUE)
+patho <- patho[-grep("Likely" , patho$X4),]
+patho <- patho[,1:3]
+
+write_delim(patho, "clinvar_patho.bed", delim='\t', col_names=FALSE)
+
+
+#+END_SRC
